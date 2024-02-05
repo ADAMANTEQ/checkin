@@ -1,0 +1,94 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"time"
+)
+
+type PointStatus struct {
+	Name   string `json:"name"`
+	Status bool   `json:"status"`
+	IP     string `json:"ip"`
+}
+
+func main() {
+	pointName := "Точка"
+	pointIP := "192.168.0.106"
+
+	point := PointStatus{
+		Name:   pointName,
+		Status: true,
+		IP:     pointIP,
+	}
+
+	url := "http://217.29.190.32:8080/checkin"
+
+	jsonData, err := json.Marshal(point)
+	if err != nil {
+		fmt.Println("Ошибка при кодировании JSON:", err)
+		return
+	}
+
+	client := http.Client{}
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Println("Ошибка при создании запроса:", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	fmt.Println("Developed by ADMNT for A-VAPE 2024 ©")
+	fmt.Println("")
+	fmt.Println("Добро пожаловать в A-VAPE Check-In!")
+	fmt.Println("Нажмите Enter для открытия смены...")
+	fmt.Scanln()
+
+	// Получение IP-адреса клиента
+	ipAddress, err := getOutboundIP()
+	if err != nil {
+		fmt.Println("Ошибка при получении IP-адреса:", err)
+		return
+	}
+
+	// Установка IP-адреса в заголовок запроса
+	req.Header.Set("X-Real-IP", ipAddress)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println("Ошибка при отправке запроса:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		fmt.Println("Авторизация прошла успешно.")
+		fmt.Println("")
+		fmt.Println("Хорошей смены!")
+		time.Sleep(3 * time.Second) // Задержка 3 секунды
+		fmt.Println("Приложение закрывается...")
+	} else if resp.StatusCode == http.StatusUnauthorized {
+		fmt.Println("Ошибка авторизации")
+		time.Sleep(3 * time.Second) // Задержка 3 секунды
+		fmt.Println("Приложение закрывается...")
+	} else {
+		fmt.Println("Неизвестный статус:", resp.Status)
+	}
+}
+
+// getOutboundIP возвращает IP-адрес исходящего соединения
+func getOutboundIP() (string, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	return localAddr.IP.String(), nil
+}
