@@ -1,0 +1,381 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"net"
+	"net/http"
+	"sync"
+	"time"
+)
+
+type Point struct {
+	Name         string    `json:"name"`
+	IP           string    `json:"ip"`
+	Address      string    `json:"address"`
+	Status       bool      `json:"status"`
+	StatusChange time.Time `json:"status_change"`
+	OpenTime     time.Time `json:"open_time"`
+}
+
+var (
+	points      []Point
+	pointsMutex sync.Mutex
+	whitelist   = map[string]bool{
+		"46.147.129.30": true, "46.147.129.83": true, "46.147.129.73": true, "84.201.254.98": true, "46.147.129.29": true,
+		"94.25.182.111": true, "84.201.245.231": true, "84.201.245.243": true, "84.201.244.155": true, "46.147.129.14": true,
+		"84.201.249.43": true, "46.147.129.50": true, "84.201.246.151": true, "188.233.237.1": true, "46.147.129.49": true,
+		"84.201.243.92": true, "46.147.129.21": true, "94.25.190.50": true, "84.201.246.79": true, "46.147.129.58": true,
+		"46.147.129.72": true, "84.201.246.176": true, "46.147.129.79": true, "86.140.1.19": true, "46.147.129.55": true,
+		"94.25.182.105": true, "84.201.242.38": true, "46.147.129.74": true, "46.147.129.25": true, "46.147.129.20": true,
+		"78.85.35.221": true, "84.201.244.146": true, "84.201.254.70": true, "84.201.245.233": true, "185.93.254.68": true,
+		"192.168.0.13": true, "92.55.4.50": true, "84.201.242.213": true}
+	username = "admin"
+	password = "666666"
+)
+
+func basicAuth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+
+		if !ok || user != username || pass != password {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		h(w, r)
+	}
+}
+
+func init() {
+	initialPoints := []Point{
+		{Name: "9 Января", IP: "46.147.129.30", Address: "г. Ижевск, ул. 9 Января, 219А", Status: false, StatusChange: time.Now()},
+		{Name: "Автовокзал", IP: "46.147.129.83", Address: "г. Ижевск, ул. Красноармейская, 127", Status: false, StatusChange: time.Now()},
+		{Name: "Аврора", IP: "185.93.254.68", Address: "г. Ижевск, ул. Удмуртская, 304", Status: false, StatusChange: time.Now()},
+		{Name: "Аксион", IP: "192.168.0.137", Address: "г. Ижевск, ул. Карла Маркса, 191", Status: false, StatusChange: time.Now()},
+		{Name: "Гранат", IP: "46.147.129.73", Address: "г. Ижевск, ул. Ворошилова, 44а", Status: false, StatusChange: time.Now()},
+		{Name: "Европа", IP: "84.201.254.98", Address: "г. Ижевск, ул. имени Вадима Сивкова, 150", Status: false, StatusChange: time.Now()},
+		{Name: "ЖД Вокзал", IP: "46.147.129.29", Address: "г. Ижевск, ул. Гагарина, 29", Status: false, StatusChange: time.Now()},
+		{Name: "Завьялово", IP: "94.25.182.111", Address: "УР, с. Завьялово, ул. Калинина, 5", Status: false, StatusChange: time.Now()},
+		{Name: "Италмас", IP: "84.201.245.231", Address: "г. Ижевск, ул. Татьяны Барамзиной, 42", Status: false, StatusChange: time.Now()},
+		{Name: "Кембридж", IP: "84.201.245.243", Address: "г. Ижевск, ул. 7-ая Подлесная, 96", Status: false, StatusChange: time.Now()},
+		{Name: "Кит", IP: "84.201.244.155", Address: "г. Ижевск, ул. Ленина, 138", Status: false, StatusChange: time.Now()},
+		{Name: "Клубная", IP: "192.168.0.100", Address: "г. Ижевск, ул. Клубная, 51", Status: false, StatusChange: time.Now()},
+		{Name: "Кольцо", IP: "46.147.129.14", Address: "г. Ижевск, ул. 50 лет ВЛКСМ, 49", Status: false, StatusChange: time.Now()},
+		{Name: "Кунгурцева", IP: "84.201.249.43", Address: "г. Ижевск, ул. Воткинское Шоссе, 39", Status: false, StatusChange: time.Now()},
+		{Name: "Ленина 26", IP: "46.147.129.50", Address: "г. Ижевск, ул. Ленина, 26", Status: false, StatusChange: time.Now()},
+		{Name: "Магнит", IP: "84.201.246.151", Address: "г. Ижевск, ул. Молодежная, 107а", Status: false, StatusChange: time.Now()},
+		{Name: "Малина", IP: "188.233.237.1", Address: "г. Ижевск, Крылова, 20", Status: false, StatusChange: time.Now()},
+		{Name: "Матрица", IP: "46.147.129.49", Address: "г. Ижевск, ул. Баранова, 87", Status: false, StatusChange: time.Now()},
+		{Name: "Медведь", IP: "84.201.243.92", Address: "г. Ижевск, ул. Пушкинская, 161а", Status: false, StatusChange: time.Now()},
+		{Name: "Меркурий", IP: "46.147.129.21", Address: "г. Ижевск, ул. Клубная, 23", Status: false, StatusChange: time.Now()},
+		{Name: "Молодежная", IP: "94.25.190.50", Address: "г. Ижевск, ул. Молодежная, 10", Status: false, StatusChange: time.Now()},
+		{Name: "Океан", IP: "84.201.246.79", Address: "г. Ижевск, ул. Кирова, 109", Status: false, StatusChange: time.Now()},
+		{Name: "Острова", IP: "46.147.129.58", Address: "г. Ижевск, 50 лет ВЛКСМ, 6", Status: false, StatusChange: time.Now()},
+		{Name: "Пушкинская 114", IP: "46.147.129.72", Address: "г. Ижевск, ул. Пушкинская, 114", Status: false, StatusChange: time.Now()},
+		{Name: "П-2", IP: "84.201.246.176", Address: "г. Ижевск, ул. Петрова, 27а", Status: false, StatusChange: time.Now()},
+		{Name: "Парашют", IP: "46.147.129.79", Address: "г. Ижевск, ул. Азина, 220", Status: false, StatusChange: time.Now()},
+		{Name: "Парма", IP: "84.201.242.213", Address: "г. Ижевск, ул. Клубная, д. 67А", Status: false, StatusChange: time.Now()},
+		{Name: "Петрова KFC", IP: "86.140.1.19", Address: "г. Ижевск, ул. Петрова, 1", Status: false, StatusChange: time.Now()},
+		{Name: "Престиж", IP: "46.147.129.55", Address: "г. Ижевск, ул. Ленина, 112", Status: false, StatusChange: time.Now()},
+		{Name: "Радиотехника", IP: "94.25.182.105", Address: "г. Ижевск, ул. Ленина, 140", Status: false, StatusChange: time.Now()},
+		{Name: "Северный", IP: "84.201.242.38", Address: "г. Ижевск, ул. Буммашевская, 92в", Status: false, StatusChange: time.Now()},
+		{Name: "Солнечный", IP: "46.147.129.74", Address: "г. Ижевск, ул. 5-ая Подлесная, 34", Status: false, StatusChange: time.Now()},
+		{Name: "Техно", IP: "46.147.129.25", Address: "г. Ижевск, ул. Подлесная 7-Я, 34", Status: false, StatusChange: time.Now()},
+		{Name: "Флагман", IP: "46.147.129.20", Address: "г. Ижевск, ул. Удмуртская, 255И", Status: false, StatusChange: time.Now()},
+		{Name: "Фурманова", IP: "78.85.35.221", Address: "г. Ижевск, ул. Азина, 340 ", Status: false, StatusChange: time.Now()},
+		{Name: "Холмы", IP: "192.168.0.8", Address: "г. Ижевск, ул. Пушкинская, 290", Status: false, StatusChange: time.Now()},
+		{Name: "ЦУМ", IP: "84.201.244.146", Address: "г. Ижевск, ул. Карла Маркса, 244", Status: false, StatusChange: time.Now()},
+		{Name: "Эльгрин", IP: "84.201.254.70", Address: "г. Ижевск, ул. 10 лет Октября, 53", Status: false, StatusChange: time.Now()},
+		{Name: "Южный", IP: "84.201.245.233", Address: "г. Ижевск, ул. Маяковского, 47", Status: false, StatusChange: time.Now()},
+		{Name: "Test", IP: "92.55.4.50", Address: "Test", Status: false, StatusChange: time.Now()},
+	}
+
+	points = append(points, initialPoints...)
+}
+
+func getAllPointsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Метод не поддерживается", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pointsMutex.Lock()
+	defer pointsMutex.Unlock()
+
+	responseJSON, err := json.Marshal(points)
+	if err != nil {
+		http.Error(w, "Ошибка при кодировании JSON", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseJSON)
+}
+
+func checkInHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Метод не поддерживается", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Получение IP-адреса клиента
+	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		http.Error(w, "Ошибка при получении IP-адреса клиента", http.StatusInternalServerError)
+		return
+	}
+
+	// Проверка, есть ли IP-адрес в белом списке
+	if _, ok := whitelist[clientIP]; ok {
+		pointsMutex.Lock()
+		defer pointsMutex.Unlock()
+
+		for i := range points {
+			if points[i].IP == clientIP {
+				// Если смена уже открыта, возвращаем ошибку
+				if points[i].Status {
+					http.Error(w, "Смена уже открыта", http.StatusConflict)
+					return
+				}
+
+				// Устанавливаем статус, время открытия и изменения статуса
+				points[i].Status = true
+				points[i].OpenTime = time.Now()
+				points[i].StatusChange = time.Now()
+				fmt.Printf("Точка %s: Смена открыта\n", points[i].Name)
+				break
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Статус успешно обновлен"))
+	} else {
+		http.Error(w, "IP-адрес не включен в белый список", http.StatusUnauthorized)
+	}
+}
+
+func resetStatus() {
+	for {
+		time.Sleep(1 * time.Minute) // Проверка каждую минуту
+
+		pointsMutex.Lock()
+		for i := range points {
+			// Если смена открыта и прошло более 10 часов с момента открытия, закрываем смену
+			if points[i].Status && time.Since(points[i].OpenTime) >= 10*time.Hour {
+				points[i].Status = false
+				points[i].StatusChange = time.Now()
+				fmt.Printf("Точка %s: Смена закрыта (прошло более 10 часов)\n", points[i].Name)
+			}
+		}
+		pointsMutex.Unlock()
+	}
+}
+
+func getNetworkIP() (string, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	return localAddr.IP.String(), nil
+}
+
+// getClientIP возвращает IP-сеть клиента из запроса
+func getClientIP(r *http.Request) (string, error) {
+	// Извлекаем IP-адрес из заголовка X-Real-IP или X-Forwarded-For
+	ip := r.Header.Get("X-Real-IP")
+	if ip == "" {
+		ip = r.Header.Get("X-Forwarded-For")
+	}
+
+	// Если IP-адрес не найден в заголовках, используем RemoteAddr
+	if ip == "" {
+		// Убедитесь, что RemoteAddr не является пустым
+		if addr, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			ip = addr
+		}
+	}
+
+	// Преобразуем строку в объект IP
+	ipAddress := net.ParseIP(ip)
+	if ipAddress == nil {
+		return "", fmt.Errorf("неверный IP-адрес: %s", ip)
+	}
+
+	// Преобразуем IP-адрес в строку
+	ipString := ipAddress.String()
+
+	return ipString, nil
+}
+
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+	pointsMutex.Lock()
+	defer pointsMutex.Unlock()
+
+	tmpl, err := template.New("index").Parse(`
+	<!DOCTYPE html>
+	<html lang="en">
+
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Список Смен</title>
+		<style>
+			body {
+				font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+				background-color: #f8f9fa;
+				margin: 0;
+				padding: 0;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				min-height: 100vh;
+			}
+
+			header {
+				background-color: #0056b3;
+				color: white;
+				text-align: center;
+				padding: 1em;
+				width: 100%;
+				box-sizing: border-box;
+				border-bottom: 2px solid #004080;
+				margin-bottom: 20px;
+			}
+
+			h1 {
+				margin: 0;
+				font-size: 2.5em;
+				text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+			}
+
+			.container {
+				width: 90%;
+				border-radius: 20px;
+				overflow: hidden;
+				box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+				background-color: #ffffff;
+				padding: 20px;
+			}
+
+			table {
+				width: 100%;
+				border-collapse: collapse;
+				margin-top: 20px;
+			}
+
+			th, td {
+				padding: 12px;
+				text-align: left;
+				border-bottom: 1px solid #dee2e6;
+			}
+
+			th {
+				background-color: #0056b3;
+				color: white;
+				font-size: 1.2em;
+				text-transform: uppercase;
+				letter-spacing: 1px;
+			}
+
+			tbody tr:hover {
+				background-color: #f0f8ff;
+			}
+
+			.status {
+				display: inline-block;
+				padding: 8px 16px;
+				border-radius: 30px;
+				font-size: 0.9em;
+			}
+
+			.status-true {
+				background-color: #28a745;
+				color: white;
+			}
+
+			.status-false {
+				background-color: #dc3545;
+				color: white;
+			}
+		</style>
+	</head>
+
+	<body>
+		<header>
+			<h1>Список Смен</h1>
+		</header>
+		<div class="container">
+			<table>
+				<thead>
+					<tr>
+						<th>Название</th>
+						<th>Адрес</th>
+						<th>Статус</th>
+						<th>Время изменения статуса</th>
+						<th>Время открытия</th>
+					</tr>
+				</thead>
+				<tbody>
+					{{range .}}
+					<tr>
+						<td>{{.Name}}</td>
+						<td>{{.Address}}</td>
+						<td>
+							{{if .Status}}
+							<span class="status status-true">Открыта</span>
+							{{else}}
+							<span class="status status-false">Закрыта</span>
+							{{end}}
+						</td>
+						<td>{{.StatusChange.Format "02.01.2006 15:04:05"}}</td>
+						<td>{{.OpenTime.Format "02.01.2006 15:04:05"}}</td>
+					</tr>
+					{{end}}
+				</tbody>
+			</table>
+		</div>
+		<footer>
+		<br>
+ 		Developed by ADMNT for A-VAPE 2024 ©<br>
+ 		<br>
+ 		</footer>
+		</body>
+
+	</html>
+	`)
+	if err != nil {
+		http.Error(w, "Ошибка при создании HTML-шаблона", http.StatusInternalServerError)
+		return
+	}
+
+	err = tmpl.Execute(w, points)
+	if err != nil {
+		http.Error(w, "Ошибка при выполнении HTML-шаблона", http.StatusInternalServerError)
+		return
+	}
+}
+
+func main() {
+	go resetStatus()
+
+	http.HandleFunc("/getallpoints", getAllPointsHandler)
+	http.HandleFunc("/checkin", checkInHandler)
+	http.HandleFunc("/", basicAuth(homeHandler))
+
+	port := 8080
+	fmt.Println("Developed by ADMNT for A-VAPE 2024 ©")
+	fmt.Println("")
+	fmt.Printf("Check-In Server запущен на порту: %d\n", port)
+	err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
+	if err != nil {
+		fmt.Println("Ошибка при запуске сервера:", err)
+	}
+}
