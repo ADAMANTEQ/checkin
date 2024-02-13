@@ -25,7 +25,7 @@ func main() {
 		IP:     pointIP,
 	}
 
-	url := "http://217.29.190.32:8080/checkin"
+	url := "http://92.55.4.51:8080/checkin"
 
 	jsonData, err := json.Marshal(point)
 	if err != nil {
